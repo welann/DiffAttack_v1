@@ -45,6 +45,9 @@ If you encounter any question, please feel free to contact us. You can create an
 - [Results](#Results)
 - [Citation & Acknowledgments](#Citation-&-Acknowledgments)
 - [License](#License)
+- Optimization Notes
+  - [Method Improvements](METHOD_IMPROVEMENTS.md)
+  - [Loss Optimization](LOSS_OPTIMIZATION.md)
 
 
 ## Abstract

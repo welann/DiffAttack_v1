@@ -91,8 +91,8 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             self_replace_steps = 0, self_replace_steps
         self.num_self_replace = (
             # self_replace_steps  是控制自注意力替换的时间范围
-            int(num_steps * self_replace_steps[0]), 
-            int(num_steps * self_replace_steps[1])
+            int(num_steps * self_replace_steps[0]),
+            int(num_steps * self_replace_steps[1]),
         )
         self.loss = 0
         self.criterion = torch.nn.MSELoss()

@@ -8,7 +8,8 @@ from utils import view_images, aggregate_attention
 from distances import LpDistance
 import other_attacks
 
-#将 PIL 图像归一化并转为 [-1,1] 的 CUDA 张量（NCHW）。
+
+# 将 PIL 图像归一化并转为 [-1,1] 的 CUDA 张量（NCHW）。
 def preprocess(image, res=512):
     image = image.resize((res, res), resample=Image.LANCZOS)
     image = np.array(image).astype(np.float32) / 255.0
@@ -16,7 +17,8 @@ def preprocess(image, res=512):
     image = torch.from_numpy(image)[:, :3, :, :].cuda()
     return 2.0 * image - 1.0
 
-#用 VAE 将图像编码为潜变量（乘以 0.18215 的缩放）。
+
+# 用 VAE 将图像编码为潜变量（乘以 0.18215 的缩放）。
 def encoder(image, model, res=512):
     generator = torch.Generator().manual_seed(8888)
     image = preprocess(image, res)
