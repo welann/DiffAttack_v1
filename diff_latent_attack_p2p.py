@@ -106,84 +106,152 @@ def ddim_reverse_sample(
     return latents, all_latents
 
 
+# def register_attention_control(model, controller):
+#     def ca_forward(self, place_in_unet):
+#         def forward(
+#             hidden_states: torch.FloatTensor,
+#             encoder_hidden_states: Optional[torch.FloatTensor] = None,
+#             attention_mask: Optional[torch.FloatTensor] = None,
+#             temb: Optional[torch.FloatTensor] = None,
+#         ):
+#             if self.spatial_norm is not None:
+#                 hidden_states = self.spatial_norm(hidden_states, temb)
+
+#             batch_size, sequence_length, _ = (
+#                 hidden_states.shape
+#                 if encoder_hidden_states is None
+#                 else encoder_hidden_states.shape
+#             )
+
+#             if attention_mask is not None:
+#                 attention_mask = self.prepare_attention_mask(
+#                     attention_mask, sequence_length, batch_size
+#                 )
+#                 attention_mask = attention_mask.view(
+#                     batch_size, self.heads, -1, attention_mask.shape[-1]
+#                 )
+
+#             if self.group_norm is not None:
+#                 hidden_states = self.group_norm(
+#                     hidden_states.transpose(1, 2)
+#                 ).transpose(1, 2)
+
+#             query = self.to_q(hidden_states)
+
+#             is_cross = encoder_hidden_states is not None
+#             if encoder_hidden_states is None:
+#                 encoder_hidden_states = hidden_states
+#             elif self.norm_cross:
+#                 encoder_hidden_states = self.norm_encoder_hidden_states(
+#                     encoder_hidden_states
+#                 )
+#             key = self.to_k(encoder_hidden_states)
+#             value = self.to_v(encoder_hidden_states)
+
+#             def reshape_heads_to_batch_dim(tensor):
+#                 b, seq_len, dim = tensor.shape
+#                 h = self.heads
+#                 tensor = tensor.reshape(b, seq_len, h, dim // h)
+#                 tensor = tensor.permute(0, 2, 1, 3).reshape(b * h, seq_len, dim // h)
+#                 return tensor
+
+#             query = reshape_heads_to_batch_dim(query)
+#             key = reshape_heads_to_batch_dim(key)
+#             value = reshape_heads_to_batch_dim(value)
+
+#             sim = torch.einsum("b i d, b j d -> b i j", query, key) * self.scale
+#             attn = sim.softmax(dim=-1)
+#             attn = controller(attn, is_cross, place_in_unet)
+#             out = torch.einsum("b i j, b j d -> b i d", attn, value)
+
+#             def reshape_batch_dim_to_heads(tensor):
+#                 b, seq_len, dim = tensor.shape
+#                 h = self.heads
+#                 tensor = tensor.reshape(b // h, h, seq_len, dim)
+#                 tensor = tensor.permute(0, 2, 1, 3).reshape(b // h, seq_len, dim * h)
+#                 return tensor
+
+#             out = reshape_batch_dim_to_heads(out)
+#             out = self.to_out[0](out)
+#             out = self.to_out[1](out)
+#             out = out / self.rescale_output_factor
+#             return out
+
+#         return forward
+
+#     def register_recr(net_, count, place_in_unet):
+#         if net_.__class__.__name__ == "Attention":
+#             net_.forward = ca_forward(net_, place_in_unet)
+#             return count + 1
+#         elif hasattr(net_, "children"):
+#             for net__ in net_.children():
+#                 count = register_recr(net__, count, place_in_unet)
+#         return count
+
+#     cross_att_count = 0
+#     sub_nets = model.unet.named_children()
+#     for net in sub_nets:
+#         if "down" in net[0]:
+#             cross_att_count += register_recr(net[1], 0, "down")
+#         elif "up" in net[0]:
+#             cross_att_count += register_recr(net[1], 0, "up")
+#         elif "mid" in net[0]:
+#             cross_att_count += register_recr(net[1], 0, "mid")
+#     controller.num_att_layers = cross_att_count
+
 def register_attention_control(model, controller):
     def ca_forward(self, place_in_unet):
-        def forward(
-            hidden_states: torch.FloatTensor,
-            encoder_hidden_states: Optional[torch.FloatTensor] = None,
-            attention_mask: Optional[torch.FloatTensor] = None,
-            temb: Optional[torch.FloatTensor] = None,
-        ):
-            if self.spatial_norm is not None:
-                hidden_states = self.spatial_norm(hidden_states, temb)
+        to_out = self.to_out
+        if type(to_out) is torch.nn.modules.container.ModuleList:
+            to_out = self.to_out[0]
+        else:
+            to_out = self.to_out
 
-            batch_size, sequence_length, _ = (
-                hidden_states.shape
-                if encoder_hidden_states is None
-                else encoder_hidden_states.shape
-            )
+        def forward(x, context=None, mask=None):
+            batch_size, sequence_length, dim = x.shape
+            h = self.heads
+            q = self.to_q(x)
+            is_cross = context is not None
+            context = context if is_cross else x
+            k = self.to_k(context)
+            v = self.to_v(context)
+            q = self.reshape_heads_to_batch_dim(q)
+            k = self.reshape_heads_to_batch_dim(k)
+            v = self.reshape_heads_to_batch_dim(v)
 
-            if attention_mask is not None:
-                attention_mask = self.prepare_attention_mask(
-                    attention_mask, sequence_length, batch_size
-                )
-                attention_mask = attention_mask.view(
-                    batch_size, self.heads, -1, attention_mask.shape[-1]
-                )
+            sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
 
-            if self.group_norm is not None:
-                hidden_states = self.group_norm(
-                    hidden_states.transpose(1, 2)
-                ).transpose(1, 2)
+            if mask is not None:
+                mask = mask.reshape(batch_size, -1)
+                max_neg_value = -torch.finfo(sim.dtype).max
+                mask = mask[:, None, :].repeat(h, 1, 1)
+                sim.masked_fill_(~mask, max_neg_value)
 
-            query = self.to_q(hidden_states)
-
-            is_cross = encoder_hidden_states is not None
-            if encoder_hidden_states is None:
-                encoder_hidden_states = hidden_states
-            elif self.norm_cross:
-                encoder_hidden_states = self.norm_encoder_hidden_states(
-                    encoder_hidden_states
-                )
-            key = self.to_k(encoder_hidden_states)
-            value = self.to_v(encoder_hidden_states)
-
-            def reshape_heads_to_batch_dim(tensor):
-                b, seq_len, dim = tensor.shape
-                h = self.heads
-                tensor = tensor.reshape(b, seq_len, h, dim // h)
-                tensor = tensor.permute(0, 2, 1, 3).reshape(b * h, seq_len, dim // h)
-                return tensor
-
-            query = reshape_heads_to_batch_dim(query)
-            key = reshape_heads_to_batch_dim(key)
-            value = reshape_heads_to_batch_dim(value)
-
-            sim = torch.einsum("b i d, b j d -> b i j", query, key) * self.scale
+            # attention, what we cannot get enough of
             attn = sim.softmax(dim=-1)
             attn = controller(attn, is_cross, place_in_unet)
-            out = torch.einsum("b i j, b j d -> b i d", attn, value)
-
-            def reshape_batch_dim_to_heads(tensor):
-                b, seq_len, dim = tensor.shape
-                h = self.heads
-                tensor = tensor.reshape(b // h, h, seq_len, dim)
-                tensor = tensor.permute(0, 2, 1, 3).reshape(b // h, seq_len, dim * h)
-                return tensor
-
-            out = reshape_batch_dim_to_heads(out)
-            out = self.to_out[0](out)
-            out = self.to_out[1](out)
-            out = out / self.rescale_output_factor
-            return out
+            out = torch.einsum("b i j, b j d -> b i d", attn, v)
+            out = self.reshape_batch_dim_to_heads(out)
+            return to_out(out)
 
         return forward
 
+    class DummyController:
+
+        def __call__(self, *args):
+            return args[0]
+
+        def __init__(self):
+            self.num_att_layers = 0
+
+    if controller is None:
+        controller = DummyController()
+
     def register_recr(net_, count, place_in_unet):
-        if net_.__class__.__name__ == "Attention":
+        if net_.__class__.__name__ == 'CrossAttention':
             net_.forward = ca_forward(net_, place_in_unet)
             return count + 1
-        elif hasattr(net_, "children"):
+        elif hasattr(net_, 'children'):
             for net__ in net_.children():
                 count = register_recr(net__, count, place_in_unet)
         return count
@@ -197,9 +265,10 @@ def register_attention_control(model, controller):
             cross_att_count += register_recr(net[1], 0, "up")
         elif "mid" in net[0]:
             cross_att_count += register_recr(net[1], 0, "mid")
+
     controller.num_att_layers = cross_att_count
 
-
+ 
 def reset_attention_control(model):
     def ca_forward(self):
         def forward(
