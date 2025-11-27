@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 
 def preprocess(image, res=512):
-    image = image.resize((res, res), resample=Image.LANCZOS)
+    image = image.resize((res, res), resample=Image.LANCZOS)  # type: ignore
     image = np.array(image).astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
     image = torch.from_numpy(image)[:, :3, :, :].cuda()
@@ -199,6 +199,7 @@ def ddim_reverse_sample(
 #             cross_att_count += register_recr(net[1], 0, "mid")
 #     controller.num_att_layers = cross_att_count
 
+
 def register_attention_control(model, controller):
     def ca_forward(self, place_in_unet):
         to_out = self.to_out
@@ -248,10 +249,10 @@ def register_attention_control(model, controller):
         controller = DummyController()
 
     def register_recr(net_, count, place_in_unet):
-        if net_.__class__.__name__ == 'CrossAttention':
+        if net_.__class__.__name__ == "CrossAttention":
             net_.forward = ca_forward(net_, place_in_unet)
             return count + 1
-        elif hasattr(net_, 'children'):
+        elif hasattr(net_, "children"):
             for net__ in net_.children():
                 count = register_recr(net__, count, place_in_unet)
         return count
@@ -268,7 +269,7 @@ def register_attention_control(model, controller):
 
     controller.num_att_layers = cross_att_count
 
- 
+
 def reset_attention_control(model):
     def ca_forward(self):
         def forward(
@@ -290,8 +291,8 @@ def reset_attention_control(model):
                 attention_mask = self.prepare_attention_mask(
                     attention_mask, sequence_length, batch_size
                 )
-                attention_mask = attention_mask.view(
-                    batch_size, self.heads, -1, attention_mask.shape[-1]
+                attention_mask = attention_mask.view(  # type: ignore
+                    batch_size, self.heads, -1, attention_mask.shape[-1]  # type: ignore
                 )
 
             if self.group_norm is not None:
@@ -385,42 +386,61 @@ def latent2image(vae, latents):
     return image
 
 
-# ========== P2P Controller ==========
+class AttentionRefine(AttentionStore):
+    """Simplified AttentionRefine: interpolate edit cross-attn columns with base columns.
 
+    - Maps edit class token columns to base class token columns (1:1 mapping).
+    - Uses a linear ramp alpha over diffusion steps (from 0 to 1).
+    - Stores attention maps for later aggregation via utils.aggregate_attention.
+    """
 
-class P2PReplaceController(AttentionStore):
     def __init__(
         self,
         res: int,
         num_steps: int,
-        keep_pairs: Tuple[List[int], List[int]],  # (base_cls_inds, edit_cls_inds)
-        keep_alpha: float = 1.0,
+        base_inds: List[int],
+        edit_inds: List[int],
+        alpha_end: float = 1.0,
     ):
         super().__init__(res)
         self.batch_size = 2
-        self.num_steps = num_steps
-        self.keep_pairs = keep_pairs
-        self.keep_alpha = keep_alpha
+        self.num_steps = max(1, num_steps)
+        self.base_inds = base_inds
+        self.edit_inds = edit_inds
+        self.alpha_end = alpha_end
+
+    def _alpha(self):
+        # Linear schedule over attack steps
+        s = min(self.cur_step, self.num_steps - 1)
+        return (s + 1) / self.num_steps * self.alpha_end
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
+        # record attention for visualization/regularization
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
         if attn.shape[1] <= (self.res // 16) ** 2:
             self.step_store[key].append(attn)
 
-        # Cross-attn replacement: keep base attention for class tokens
-        if is_cross:
-            bsz = self.batch_size
-            h = attn.shape[0] // bsz
-            attn_ = attn.reshape(bsz, h, *attn.shape[1:])
-            attn_base, attn_edit = attn_[0], attn_[1]
-            base_inds, edit_inds = self.keep_pairs
-            if len(base_inds) > 0 and len(edit_inds) == len(base_inds):
-                # mix with alpha (default: replace)
-                attn_edit[:, :, :, edit_inds] = (1.0 - self.keep_alpha) * attn_edit[
-                    :, :, :, edit_inds
-                ] + self.keep_alpha * attn_base[:, :, :, base_inds]
-                attn_[1] = attn_edit
-                attn = attn_.reshape(bsz * h, *attn_.shape[2:])
+        if not is_cross:
+            return attn
+
+        if len(self.base_inds) == 0 or len(self.edit_inds) != len(self.base_inds):
+            return attn
+
+        bsz = self.batch_size
+        h = attn.shape[0] // bsz
+        attn_ = attn.reshape(bsz, h, *attn.shape[1:])
+        attn_base, attn_edit = attn_[0], attn_[1]
+        alpha = self._alpha()
+        base_idx = torch.as_tensor(self.base_inds, device=attn.device)
+        edit_idx = torch.as_tensor(self.edit_inds, device=attn.device)
+        # Interpolate specific token columns
+        blended = (
+            alpha * attn_base[:, :, :, base_idx]
+            + (1.0 - alpha) * attn_edit[:, :, :, edit_idx]
+        )
+        attn_edit[:, :, :, edit_idx] = blended
+        attn_[1] = attn_edit
+        attn = attn_.reshape(bsz * h, *attn_.shape[2:])
         return attn
 
 
@@ -479,11 +499,11 @@ def diffattack(
     args=None,
 ):
     # dataset labels
-    if args.dataset_name == "imagenet_compatible":
+    if args.dataset_name == "imagenet_compatible":  # type: ignore
         from dataset_caption import imagenet_label
-    elif args.dataset_name == "cub_200_2011":
+    elif args.dataset_name == "cub_200_2011":  # type: ignore
         from dataset_caption import CUB_label as imagenet_label
-    elif args.dataset_name == "standford_car":
+    elif args.dataset_name == "standford_car":  # type: ignore
         from dataset_caption import stanfordCar_label as imagenet_label
     else:
         raise NotImplementedError
@@ -500,9 +520,9 @@ def diffattack(
     height = width = res
 
     # Clean evaluation
-    test_image = image.resize((height, height), resample=Image.LANCZOS)
+    test_image = image.resize((height, height), resample=Image.LANCZOS)  # type: ignore
     test_image = np.float32(test_image) / 255.0
-    test_image = test_image[:, :, :3]
+    test_image = test_image[:, :, :3]  # type: ignore
     test_image[:, :] -= (np.float32(0.485), np.float32(0.456), np.float32(0.406))
     test_image[:, :] /= (np.float32(0.229), np.float32(0.224), np.float32(0.225))
     test_image = test_image.transpose((2, 0, 1))
@@ -582,11 +602,12 @@ def diffattack(
     base_cls_inds, edit_cls_inds, edit_modifier_inds = get_class_and_edit_indices(
         model.tokenizer, class_text, edit_text
     )
-    controller = P2PReplaceController(
+    controller = AttentionRefine(
         res=args.res,
-        num_steps=num_inference_steps - start_step,
-        keep_pairs=(base_cls_inds, edit_cls_inds),
-        keep_alpha=1.0,
+        num_steps=len(model.scheduler.timesteps[1 + start_step - 1 :]),
+        base_inds=base_cls_inds,
+        edit_inds=edit_cls_inds,
+        alpha_end=1.0,
     )
     register_attention_control(model, controller)
 
@@ -701,7 +722,7 @@ def diffattack(
         out_image = out_image[:, :, :].sub(mean).div(std)
         out_image = out_image.permute(0, 3, 1, 2)
 
-        if args.dataset_name != "imagenet_compatible":
+        if args.dataset_name != "imagenet_compatible":  # type: ignore
             pred = classifier(out_image) / 10
         else:
             pred = classifier(out_image)
@@ -802,3 +823,243 @@ def diffattack(
     reset_attention_control(model)
 
     return image_np[0], pred_accuracy_clean, pred_accuracy
+
+
+@torch.enable_grad()
+def diffattack_ptp(
+    model,
+    label,
+    prompts,
+    ptp_controller,  # 这里传入prompt-to-prompt的AttentionControl实例
+    num_inference_steps: int = 20,
+    guidance_scale: float = 2.5,
+    image=None,
+    model_name="inception",
+    save_path="output",
+    res=224,
+    start_step=15,
+    iterations=30,
+    verbose=True,
+    topN=1,
+    args=None,
+):
+    """
+    diffattack with prompt-to-prompt style attention controller.
+    """
+    # 1. 数据和模型准备
+    if args.dataset_name == "imagenet_compatible":  # type: ignore
+        from dataset_caption import imagenet_label
+    elif args.dataset_name == "cub_200_2011":  # type: ignore
+        from dataset_caption import CUB_label as imagenet_label
+    elif args.dataset_name == "standford_car":  # type: ignore
+        from dataset_caption import stanfordCar_label as imagenet_label
+    else:
+        raise NotImplementedError
+
+    label = torch.from_numpy(label).long().cuda()
+
+    model.vae.requires_grad_(False)
+    model.text_encoder.requires_grad_(False)
+    model.unet.requires_grad_(False)
+
+    classifier = other_attacks.model_selection(model_name).eval()
+    classifier.requires_grad_(False)
+
+    height = width = res
+
+    # 2. 预处理与DDIM反推
+    latent, inversion_latents = ddim_reverse_sample(
+        image, prompts, model, num_inference_steps, 0, res=height
+    )
+    inversion_latents = inversion_latents[::-1]
+    latent = inversion_latents[start_step - 1]
+
+    # 3. 优化uncond embedding（可选，流程同原版）
+    max_length = 77
+    batch_size = len(prompts)
+    uncond_input = model.tokenizer(
+        [""] * batch_size,
+        padding="max_length",
+        max_length=max_length,
+        return_tensors="pt",
+    )
+    uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
+    text_input = model.tokenizer(
+        prompts,
+        padding="max_length",
+        max_length=model.tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    )
+    text_embeddings = model.text_encoder(text_input.input_ids.to(model.device))[0]
+
+    all_uncond_emb = []
+    latent, latents = init_latent(latent, model, height, width, batch_size)
+    uncond_embeddings.requires_grad_(True)
+    optimizer = optim.AdamW([uncond_embeddings], lr=1e-1)
+    loss_func = torch.nn.MSELoss()
+    context = torch.cat([uncond_embeddings, text_embeddings])
+
+    for ind, t in enumerate(
+        tqdm(
+            model.scheduler.timesteps[1 + start_step - 1 :],
+            desc="Optimize_uncond_embed",
+        )
+    ):
+        for _ in range(10 + 2 * ind):
+            out_latents = diffusion_step(model, latents, context, t, guidance_scale)
+            optimizer.zero_grad()
+            loss = loss_func(out_latents, inversion_latents[start_step - 1 + ind + 1])
+            loss.backward()
+            optimizer.step()
+            context = torch.cat([uncond_embeddings, text_embeddings])
+        with torch.no_grad():
+            latents = diffusion_step(
+                model, latents, context, t, guidance_scale
+            ).detach()
+            all_uncond_emb.append(uncond_embeddings.detach().clone())
+
+    uncond_embeddings.requires_grad_(False)
+
+    # 4. 注册prompt-to-prompt控制器
+    register_attention_control(model, ptp_controller)
+
+    # 5. 攻击优化（对latent做梯度攻击，attention由ptp_controller控制）
+    original_latent = latent.clone()
+    latent.requires_grad_(True)
+    optimizer = optim.AdamW([latent], lr=1e-2)
+    cross_entro = torch.nn.CrossEntropyLoss()
+    init_image = preprocess(image, res)
+
+    apply_mask = args.is_apply_mask
+    hard_mask = args.is_hard_mask
+    if apply_mask:
+        init_mask = None
+    else:
+        init_mask = torch.ones([1, 1, *init_image.shape[-2:]]).cuda()
+
+    pbar = tqdm(range(iterations), desc="Iterations")
+    for _, _ in enumerate(pbar):
+        ptp_controller.loss = 0
+        ptp_controller.reset()
+        latents = torch.cat([original_latent, latent])
+
+        for ind, t in enumerate(model.scheduler.timesteps[1 + start_step - 1 :]):
+            latents = diffusion_step(model, latents, context, t, guidance_scale)
+
+        # 可选：聚合attention map用于mask
+        # 可选：可用ptp_controller的attention store做可视化
+
+        if init_mask is None:
+            # 这里可用ptp_controller的attention map做mask
+            init_mask = torch.ones([1, 1, *init_image.shape[-2:]]).cuda()
+        init_out_image = (
+            model.vae.decode(1 / 0.18215 * latents)["sample"][1:] * init_mask
+            + (1 - init_mask) * init_image
+        )
+
+        out_image = (init_out_image / 2 + 0.5).clamp(0, 1)
+        out_image = out_image.permute(0, 2, 3, 1)
+        mean = torch.as_tensor(
+            [0.485, 0.456, 0.406], dtype=out_image.dtype, device=out_image.device
+        )
+        std = torch.as_tensor(
+            [0.229, 0.224, 0.225], dtype=out_image.dtype, device=out_image.device
+        )
+        out_image = out_image[:, :, :].sub(mean).div(std)
+        out_image = out_image.permute(0, 3, 1, 2)
+
+        if args.dataset_name != "imagenet_compatible":
+            pred = classifier(out_image) / 10
+        else:
+            pred = classifier(out_image)
+
+        attack_loss = -cross_entro(pred, label) * args.attack_loss_weight
+        # ptp_controller.loss 可作为结构损失（如有定义）
+        self_attn_loss = getattr(ptp_controller, "loss", 0) * args.self_attn_loss_weight
+        loss = attack_loss + self_attn_loss
+
+        if verbose:
+            pbar.set_postfix_str(
+                f"attack_loss: {attack_loss.item():.5f} "
+                f"self_attn_loss: {self_attn_loss.item() if isinstance(self_attn_loss, torch.Tensor) else self_attn_loss:.5f} "
+                f"loss: {loss.item():.5f}"
+            )
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    # 6. 最终生成与评估
+    with torch.no_grad():
+        ptp_controller.loss = 0
+        ptp_controller.reset()
+        latents = torch.cat([original_latent, latent])
+        for ind, t in enumerate(model.scheduler.timesteps[1 + start_step - 1 :]):
+            latents = diffusion_step(model, latents, context, t, guidance_scale)
+
+    out_image = (
+        model.vae.decode(1 / 0.18215 * latents.detach())["sample"][1:] * init_mask
+        + (1 - init_mask) * init_image
+    )
+    out_image = (out_image / 2 + 0.5).clamp(0, 1)
+    out_image = out_image.permute(0, 2, 3, 1)
+    mean = torch.as_tensor(
+        [0.485, 0.456, 0.406], dtype=out_image.dtype, device=out_image.device
+    )
+    std = torch.as_tensor(
+        [0.229, 0.224, 0.225], dtype=out_image.dtype, device=out_image.device
+    )
+    out_image = out_image[:, :, :].sub(mean).div(std)
+    out_image = out_image.permute(0, 3, 1, 2)
+
+    pred = classifier(out_image)
+    pred_label = torch.argmax(pred, 1).detach()
+    pred_accuracy = (torch.argmax(pred, 1).detach() == label).sum().item() / len(label)
+    print("Accuracy on adversarial examples: {}%".format(pred_accuracy * 100))
+
+    logit = torch.nn.Softmax()(pred)
+    print("after_pred:", pred_label, logit[0, pred_label[0]])
+    print("after_true:", label, logit[0, label[0]])
+
+    # 可选：可视化与距离度量
+    image = latent2image(model.vae, latents.detach())
+    real = (init_image / 2 + 0.5).clamp(0, 1).permute(0, 2, 3, 1).cpu().numpy()
+    perturbed = (
+        image[1:].astype(np.float32)
+        / 255
+        * init_mask.squeeze().unsqueeze(-1).cpu().numpy()
+        + (1 - init_mask.squeeze().unsqueeze(-1).cpu().numpy()) * real
+    )
+    image = (perturbed * 255).astype(np.uint8)
+    view_images(
+        np.concatenate([real, perturbed]) * 255,
+        show=False,
+        save_path=save_path
+        + "_diff_{}_image_{}.png".format(
+            model_name, "ATKSuccess" if pred_accuracy == 0 else "Fail"
+        ),
+    )
+    view_images(perturbed * 255, show=False, save_path=save_path + "_adv_image.png")
+
+    L1 = LpDistance(1)
+    L2 = LpDistance(2)
+    Linf = LpDistance(float("inf"))
+    print(
+        "L1: {}\tL2: {}\tLinf: {}".format(
+            L1(real, perturbed), L2(real, perturbed), Linf(real, perturbed)
+        )
+    )
+
+    diff = perturbed - real
+    diff = (diff - diff.min()) / (diff.max() - diff.min()) * 255
+    view_images(
+        diff.clip(0, 255), show=False, save_path=save_path + "_diff_relative.png"
+    )
+    diff = (np.abs(perturbed - real) * 255).astype(np.uint8)
+    view_images(
+        diff.clip(0, 255), show=False, save_path=save_path + "_diff_absolute.png"
+    )
+
+    reset_attention_control(model)
+    return image[0], 0, 0

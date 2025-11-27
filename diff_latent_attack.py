@@ -365,6 +365,9 @@ def diffattack(
     topN=1,
     args=None,
 ):
+
+    # 初始化基本组件
+
     if args.dataset_name == "imagenet_compatible":
         from dataset_caption import imagenet_label
     elif args.dataset_name == "cub_200_2011":
