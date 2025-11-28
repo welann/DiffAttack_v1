@@ -4,7 +4,7 @@ from attentionControl import AttentionControlEdit
 import diff_latent_attack
 import diff_latent_attack_p2p
 
-from diff_latent_attack_p2p import diffattack
+# from diff_latent_attack_p2p import diffattack
 
 from PIL import Image
 import numpy as np
@@ -108,7 +108,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--attack_mode",
-    default="p2p",
+    default="orig",
     choices=["p2p", "orig"],
     help="Choose P2P-based attack (p2p) or original implementation (orig)",
 )
@@ -342,3 +342,8 @@ if __name__ == "__main__":
             adversarially trained models.
     """
     model_transfer(images, adv_images, label, res, save_path=save_dir, args=args)
+
+# python main.py --model_name resnet --save_dir runs/diffattack_demo --images_root demo/images --label_path demo/labels.txt --pretrained_diffusion_path Manojb/stable-diffusion-2-base
+
+# python main.py --model_name resnet --save_dir runs/diffattack_demo_wo_2loss --images_root demo/images --label_path demo/labels.txt --pretrained_diffusion_path Manojb/stable-diffusion-2-base
+

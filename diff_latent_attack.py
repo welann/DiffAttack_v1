@@ -26,7 +26,6 @@ def encoder(image, model, res=512):
     gpu_generator.manual_seed(generator.initial_seed())
     return 0.18215 * model.vae.encode(image).latent_dist.sample(generator=gpu_generator)
 
-
 @torch.no_grad()
 def ddim_reverse_sample(
     image,
@@ -726,3 +725,5 @@ def diffattack(
     #                                save_path=r"{}_selfAttentionAfter.jpg".format(save_path), select=1)
 
     return image[0], 0, 0
+
+
