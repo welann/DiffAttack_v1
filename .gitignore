@@ -3,3 +3,5 @@ __pycache__
 /pretrained_models/
 /output/
 runs/*
+imagenet-compatible/** 
+imagenet-compatible.zip
