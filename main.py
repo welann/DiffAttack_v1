@@ -2,9 +2,6 @@ import torch
 from diffusers import StableDiffusionPipeline, DDIMScheduler
 from attentionControl import AttentionControlEdit
 import diff_latent_attack
-import diff_latent_attack_p2p
-
-# from diff_latent_attack_p2p import diffattack
 
 from PIL import Image
 import numpy as np
@@ -15,6 +12,22 @@ import random
 import sys
 from natsort import ns, natsorted
 import argparse
+import wandb
+
+# Start a new wandb run to track this script.
+run = wandb.init(
+    # Set the wandb entity where your project will be logged (generally your team name).
+    entity="welann",
+    # Set the wandb project where this run will be logged.
+    project="icme",
+    # Track hyperparameters and run metadata.
+    config={
+        "dataset": "demo-10",
+        "target_model_name": "resnet",
+        "discription":""
+    },
+)
+
 
 parser = argparse.ArgumentParser()
 
@@ -333,7 +346,9 @@ if __name__ == "__main__":
 
     print("Clean acc: {}%".format(clean_all_acc / len(all_images) * 100))
     print("Adv acc: {}%".format(adv_all_acc / len(all_images) * 100))
-
+    run.summary["Clean acc"] = clean_all_acc / len(all_images) * 100
+    run.summary["Adv acc"] = adv_all_acc / len(all_images) * 100
+    
     images = np.concatenate(images)
     adv_images = np.concatenate(adv_images)
 

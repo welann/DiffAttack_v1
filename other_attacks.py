@@ -15,6 +15,8 @@ import warnings
 import pytorch_fid.fid_score as fid_score
 from Finegrained_model import model as otherModel
 
+import wandb
+
 warnings.filterwarnings("ignore")
 
 
@@ -88,11 +90,19 @@ def model_selection(name):
 
 def model_transfer(clean_img, adv_img, label, res, save_path=r"C:\Users\PC\Desktop\output", fid_path=None, args=None):
     log = open(os.path.join(save_path, "log.txt"), mode="w", encoding="utf-8")
-
+    aimage=[]
+    for img in adv_img:
+        aimage.append(wandb.Image(img.transpose(1, 2, 0)))
+    wandb.log({f"adv_image": aimage} )
+    cimage=[]
+    for img in clean_img:
+        cimage.append(wandb.Image(img.transpose(1, 2, 0)))
+    wandb.log({f"clean_image": cimage} )
+              
     if args.dataset_name == "imagenet_compatible":
         models_transfer_name = ["resnet", "vgg", "mobile", "inception", "convnext", "vit", "swin", 'deit-b', 'deit-s',
-                                'mixer-b', 'mixer-l', 'tf2torch_adv_inception_v3', 'tf2torch_ens3_adv_inc_v3',
-                                'tf2torch_ens4_adv_inc_v3', 'tf2torch_ens_adv_inc_res_v2']
+                                'mixer-b', 'mixer-l', ]#'tf2torch_adv_inception_v3', 'tf2torch_ens3_adv_inc_v3',
+                                # 'tf2torch_ens4_adv_inc_v3', 'tf2torch_ens_adv_inc_res_v2'
         nb_classes = 1000
     elif args.dataset_name == "cub_200_2011":
         models_transfer_name = ["cubResnet50", "cubSEResnet154", "cubSEResnet101"]
@@ -105,6 +115,7 @@ def model_transfer(clean_img, adv_img, label, res, save_path=r"C:\Users\PC\Deskt
 
     all_clean_accuracy = []
     all_adv_accuracy = []
+    
     for name in models_transfer_name:
         print("\n*********Transfer to {}********".format(name))
         print("\n*********Transfer to {}********".format(name), file=log)
@@ -138,8 +149,12 @@ def model_transfer(clean_img, adv_img, label, res, save_path=r"C:\Users\PC\Deskt
 
     print("clean_accuracy: ", "\t".join([str(x) for x in all_clean_accuracy]), file=log)
     print("adv_accuracy: ", "\t".join([str(x) for x in all_adv_accuracy]), file=log)
-
+    
+    table = wandb.Table(columns=["model","clean_accuracy", "adv_accuracy"], data=[[name,all_clean_accuracy[index],all_adv_accuracy[index]] for index, name in enumerate(models_transfer_name)])
+    wandb.log({"attack_results": table})
+    
     fid = fid_score.main(save_path if fid_path is None else fid_path, args.dataset_name)
+    wandb.summary["fid"] = fid
     print("\n*********fid: {}********".format(fid))
     print("\n*********fid: {}********".format(fid), file=log)
 

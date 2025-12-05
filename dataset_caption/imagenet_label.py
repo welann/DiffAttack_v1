@@ -1006,3 +1006,16 @@ for k, v in Label.items():
     else:
         select = v.split(",")[0]
     refined_Label.update({k: select})
+
+additional_text = {
+    809:"a smooth ceramic surface",
+    605:"a glossy metallic casing",
+    94:"iridescent emerald feathers",
+    777:"worn leather texture",
+    768:"textured brown leather",
+    663: "ancient stone walls",
+    717: "a rugged open cargo bed",
+    671: "thick treaded tires",
+    324: "pale white wings",
+    759:"a prominent optical viewfinder",
+    }

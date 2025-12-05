@@ -94,9 +94,15 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             int(num_steps * self_replace_steps[0]),
             int(num_steps * self_replace_steps[1]),
         )
-        self.loss = 0
+        # 用于日志的累计（float）
+        self.loss = 0.0
+        self.cross_loss = 0.0
+        # 用于本次优化步的 tensor 累计（会在外部取出并清空，避免跨步保留计算图）
+        self._loss_tensor = None
+        self._cross_loss_tensor = None
         self.criterion = torch.nn.MSELoss()
 
+    # todo 需要在这里计算好注意力图不同得到的loss，看utils文件里的计算，这里的注意力图会存储原始的prompt中的注意力权重
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         super(AttentionControlEdit, self).forward(attn, is_cross, place_in_unet)
         # 2. 判断是否需要处理（交叉注意力或在替换步骤范围内的自注意力）
@@ -107,6 +113,43 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             h = attn.shape[0] // (self.batch_size)
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
             attn_base, attn_repalce = attn[0], attn[1:]
+            if is_cross:
+                """
+                ==========================================
+                ======= Cross Attention Control ==========
+                === 将指定词的注意力进行处理, 通过loss拉近原图与新图之间的距离 ==
+                ==========================================
+                """
+                # print("Cross Attention Control at step:", self.cur_step)
+                # print(
+                #     f"Token index from {self.first_token_index} to {self.last_token_index}"
+                # )
+                # print(
+                #     f"Attention shape: {attn.shape}, base: {attn_base.shape}, replace: {attn_repalce.shape}"
+                # )
+
+                token_index = self.first_token_index  # 需要替换的token索引
+                token_index_end = self.last_token_index  # 需要替换的token索引结束位置
+                token_attention_base = attn_base[
+                    :, :, token_index:token_index_end
+                ]  # 基础注意力中对应token的注意力
+                token_attention_replace = attn_repalce[
+                    :, :, :, token_index:token_index_end
+                ]  # 替换注意力中对应token的注意力
+
+                # 计算当前 forward 的 tensor loss（用于梯度），累加到临时 tensor
+                _l = self.criterion(
+                    token_attention_base.unsqueeze(0), token_attention_replace
+                )
+                if self._cross_loss_tensor is None:
+                    self._cross_loss_tensor = _l
+                else:
+                    self._cross_loss_tensor = self._cross_loss_tensor + _l
+
+                self.cross_loss += _l.detach().item()
+
+                # print(f"Step {self.cur_step}: Cross Attention Loss: {self.cross_loss}")
+
             # 4. 对自注意力进行特殊处理
             if not is_cross:
                 """
@@ -115,11 +158,30 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
                 === Details please refer to Section 3.4 ==
                 ==========================================
                 """
-                self.loss += self.criterion(
+                _l2 = self.criterion(
                     attn[1:], self.replace_self_attention(attn_base, attn_repalce)
                 )
+                if self._loss_tensor is None:
+                    self._loss_tensor = _l2
+                else:
+                    self._loss_tensor = self._loss_tensor + _l2
+                self.loss += _l2.detach().item()
+                # print(f"Step {self.cur_step}: Self Attention Loss: {self.loss}")
+
+            self.pop_current_attn_loss()
             attn = attn.reshape(self.batch_size * h, *attn.shape[2:])
+
         return attn
 
     def replace_self_attention(self, attn_base, att_replace):
         return attn_base.unsqueeze(0).expand(att_replace.shape[0], *attn_base.shape)
+
+    def pop_current_attn_loss(self):
+            """
+            返回当前迭代（或一次生成流程）累积的 attention loss tensor（可直接加到总 loss 并 backward），
+            并清空内部 tensor（避免下一次 backward 时重复使用已释放的中间节点）。
+            返回 None 或 tensor。
+            """
+            # 清空临时 tensor（注意：日志累积 self.cross_loss / self.loss 保留）
+            self._cross_loss_tensor = None
+            self._loss_tensor = None
