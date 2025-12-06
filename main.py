@@ -14,20 +14,6 @@ from natsort import ns, natsorted
 import argparse
 import wandb
 
-# Start a new wandb run to track this script.
-run = wandb.init(
-    # Set the wandb entity where your project will be logged (generally your team name).
-    entity="welann",
-    # Set the wandb project where this run will be logged.
-    project="icme",
-    # Track hyperparameters and run metadata.
-    config={
-        "dataset": "demo-10",
-        "target_model_name": "resnet",
-        "discription":""
-    },
-)
-
 
 parser = argparse.ArgumentParser()
 
@@ -201,6 +187,19 @@ def run_diffusion_attack(
 
 if __name__ == "__main__":
     args = parser.parse_args()
+    # Start a new wandb run to track this script.
+    run = wandb.init(
+        # Set the wandb entity where your project will be logged (generally your team name).
+        entity="welann",
+        # Set the wandb project where this run will be logged.
+        project="icme",
+        # Track hyperparameters and run metadata.
+        config={
+            "dataset": f"{args.dataset_name}",
+            "target_model_name": f"{args.model_name}",
+            "discription": f"{args}",
+        },
+    )
     assert (
         args.res % 32 == 0 and args.res >= 96
     ), "Please ensure the input resolution be a multiple of 32 and also >= 96."
@@ -348,7 +347,7 @@ if __name__ == "__main__":
     print("Adv acc: {}%".format(adv_all_acc / len(all_images) * 100))
     run.summary["Clean acc"] = clean_all_acc / len(all_images) * 100
     run.summary["Adv acc"] = adv_all_acc / len(all_images) * 100
-    
+
     images = np.concatenate(images)
     adv_images = np.concatenate(adv_images)
 
@@ -361,4 +360,3 @@ if __name__ == "__main__":
 # python main.py --model_name resnet --save_dir runs/diffattack_demo --images_root demo/images --label_path demo/labels.txt --pretrained_diffusion_path Manojb/stable-diffusion-2-base
 
 # python main.py --model_name resnet --save_dir runs/diffattack_demo_wo_2loss --images_root demo/images --label_path demo/labels.txt --pretrained_diffusion_path Manojb/stable-diffusion-2-base
-
