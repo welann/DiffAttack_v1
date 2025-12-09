@@ -18,6 +18,7 @@ dependencies = [
     "scipy",
     "timm==0.4.12",
     "torch>=2.8.0",
+    "torchattacks>=3.5.1",
     "torchvision",
     "tqdm==4.62.2",
     "transformers",
