@@ -113,40 +113,40 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             h = attn.shape[0] // (self.batch_size)
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
             attn_base, attn_repalce = attn[0], attn[1:]
-            if is_cross:
-                """
-                ==========================================
-                ======= Cross Attention Control ==========
-                === 将指定词的注意力进行处理, 通过loss拉近原图与新图之间的距离 ==
-                ==========================================
-                """
-                # print("Cross Attention Control at step:", self.cur_step)
-                # print(
-                #     f"Token index from {self.first_token_index} to {self.last_token_index}"
+            # if is_cross:
+                # """
+                # ==========================================
+                # ======= Cross Attention Control ==========
+                # === 将指定词的注意力进行处理, 通过loss拉近原图与新图之间的距离 ==
+                # ==========================================
+                # """
+                # # print("Cross Attention Control at step:", self.cur_step)
+                # # print(
+                # #     f"Token index from {self.first_token_index} to {self.last_token_index}"
+                # # )
+                # # print(
+                # #     f"Attention shape: {attn.shape}, base: {attn_base.shape}, replace: {attn_repalce.shape}"
+                # # )
+
+                # token_index = self.first_token_index  # 需要替换的token索引
+                # token_index_end = self.last_token_index  # 需要替换的token索引结束位置
+                # token_attention_base = attn_base[
+                #     :, :, token_index:token_index_end
+                # ]  # 基础注意力中对应token的注意力
+                # token_attention_replace = attn_repalce[
+                #     :, :, :, token_index:token_index_end
+                # ]  # 替换注意力中对应token的注意力
+
+                # # 计算当前 forward 的 tensor loss（用于梯度），累加到临时 tensor
+                # _l = self.criterion(
+                #     token_attention_base.unsqueeze(0), token_attention_replace
                 # )
-                # print(
-                #     f"Attention shape: {attn.shape}, base: {attn_base.shape}, replace: {attn_repalce.shape}"
-                # )
+                # if self._cross_loss_tensor is None:
+                #     self._cross_loss_tensor = _l
+                # else:
+                #     self._cross_loss_tensor = self._cross_loss_tensor + _l
 
-                token_index = self.first_token_index  # 需要替换的token索引
-                token_index_end = self.last_token_index  # 需要替换的token索引结束位置
-                token_attention_base = attn_base[
-                    :, :, token_index:token_index_end
-                ]  # 基础注意力中对应token的注意力
-                token_attention_replace = attn_repalce[
-                    :, :, :, token_index:token_index_end
-                ]  # 替换注意力中对应token的注意力
-
-                # 计算当前 forward 的 tensor loss（用于梯度），累加到临时 tensor
-                _l = self.criterion(
-                    token_attention_base.unsqueeze(0), token_attention_replace
-                )
-                if self._cross_loss_tensor is None:
-                    self._cross_loss_tensor = _l
-                else:
-                    self._cross_loss_tensor = self._cross_loss_tensor + _l
-
-                self.cross_loss += _l.detach().item()
+                # self.cross_loss += _l.detach().item()
 
                 # print(f"Step {self.cur_step}: Cross Attention Loss: {self.cross_loss}")
 
