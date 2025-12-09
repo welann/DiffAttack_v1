@@ -4,7 +4,12 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 from torch import optim
-from utils import view_images, aggregate_attention,show_cross_attention,show_self_attention_comp
+from utils import (
+    view_images,
+    aggregate_attention,
+    show_cross_attention,
+    show_self_attention_comp,
+)
 from distances import LpDistance
 import other_attacks
 
@@ -25,6 +30,7 @@ def encoder(image, model, res=512):
     gpu_generator = torch.Generator(device=image.device)
     gpu_generator.manual_seed(generator.initial_seed())
     return 0.18215 * model.vae.encode(image).latent_dist.sample(generator=gpu_generator)
+
 
 @torch.no_grad()
 def ddim_reverse_sample(
@@ -422,26 +428,28 @@ def diffattack(
     target_prompt = " ".join(
         [imagenet_label.refined_Label[label.item()] for i in range(1, topN)]
     )
-    
-    real_label=imagenet_label.refined_Label[label.item()]
-    additional_text=imagenet_label.additional_text[label.item()]
-    
-    prompt=["a photo of "+real_label+" with "+ additional_text]
+
+    target_prompt = " ".join(
+        [imagenet_label.refined_Label[label.item()] for i in range(1, topN)]
+    )
+    prompt = [imagenet_label.refined_Label[label.item()] + " " + target_prompt] * 2
     print(
         "prompt generate: ", prompt[0], "\tlabels: ", pred_labels.cpu().numpy().tolist()
     )
-    prompt = [prompt[0] + " " + target_prompt] * 2
 
-    
-    controller.first_token_index = 4
+    controller.first_token_index = 1
     s = imagenet_label.refined_Label[label.item()]
-    controller.last_token_index = 4 + (1 if " " not in s else len(s.split()))
-    
-    print("first_token_index: ", controller.first_token_index, 
-          "last_token_index: ", controller.last_token_index)
+    controller.last_token_index = 1 + (1 if " " not in s else len(s.split()))
+
+    print(
+        "first_token_index: ",
+        controller.first_token_index,
+        "last_token_index: ",
+        controller.last_token_index,
+    )
     true_label = model.tokenizer.encode(imagenet_label.refined_Label[label.item()])
     target_label = model.tokenizer.encode(target_prompt)
-    print("decoder: ",  true_label, target_label)
+    print("decoder: ", true_label, target_label)
 
     """
             ==========================================
@@ -626,18 +634,17 @@ def diffattack(
         # variance_cross_attn_loss = (
         #     after_true_label_attention_map.var() * args.cross_attn_loss_weight
         # )
-        cross_attn_loss= controller.cross_loss * args.cross_attn_loss_weight
+        cross_attn_loss = controller.cross_loss * args.cross_attn_loss_weight
 
         # Preserve Content Structure. Details please refer to Section 3.4
         self_attn_loss = controller.loss * args.self_attn_loss_weight
-
 
         loss = self_attn_loss + attack_loss + cross_attn_loss
         # print(f"self_attn_loss: {self_attn_loss.item():.5f} ")
         # print(f"attack_loss: {attack_loss.item():.5f} ")
         # print(f"cross_attn_loss: {cross_attn_loss.item():.5f} ")
         # print(f"loss: {loss.item():.5f} ")
-        
+
         if verbose:
             pbar.set_postfix_str(
                 f"attack_loss: {attack_loss} "
@@ -733,15 +740,37 @@ def diffattack(
 
     reset_attention_control(model)
 
-    show_cross_attention(prompt, model.tokenizer, controller, res=args.res // 32, from_where=("up", "down"),
-                               save_path=r"{}_crossAttentionBefore.jpg".format(save_path))
-    show_cross_attention(prompt, model.tokenizer, controller, res=args.res // 32, from_where=("up", "down"),
-                               save_path=r"{}_crossAttentionAfter.jpg".format(save_path), select=1)
-    show_self_attention_comp(prompt, controller, res=14, from_where=("up", "down"),
-                                   save_path=r"{}_selfAttentionBefore.jpg".format(save_path))
-    show_self_attention_comp(prompt, controller, res=14, from_where=("up", "down"),
-                                   save_path=r"{}_selfAttentionAfter.jpg".format(save_path), select=1)
+    show_cross_attention(
+        prompt,
+        model.tokenizer,
+        controller,
+        res=args.res // 32,
+        from_where=("up", "down"),
+        save_path=r"{}_crossAttentionBefore.jpg".format(save_path),
+    )
+    show_cross_attention(
+        prompt,
+        model.tokenizer,
+        controller,
+        res=args.res // 32,
+        from_where=("up", "down"),
+        save_path=r"{}_crossAttentionAfter.jpg".format(save_path),
+        select=1,
+    )
+    show_self_attention_comp(
+        prompt,
+        controller,
+        res=14,
+        from_where=("up", "down"),
+        save_path=r"{}_selfAttentionBefore.jpg".format(save_path),
+    )
+    show_self_attention_comp(
+        prompt,
+        controller,
+        res=14,
+        from_where=("up", "down"),
+        save_path=r"{}_selfAttentionAfter.jpg".format(save_path),
+        select=1,
+    )
 
     return image[0], 0, 0
-
-
