@@ -106,12 +106,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--attack_mode",
-    default="orig",
-    choices=["p2p", "orig"],
-    help="Choose P2P-based attack (p2p) or original implementation (orig)",
-)
-parser.add_argument(
     "--edit_attr",
     default="brown",
     type=str,
@@ -148,39 +142,22 @@ def run_diffusion_attack(
     iterations=30,
     args=None,
 ):
-    if args.attack_mode == "p2p":
-        adv_image, clean_acc, adv_acc = diff_latent_attack_p2p.diffattack(
-            model=diffusion_model,
-            label=label,
-            controller_unused=None,
-            num_inference_steps=diffusion_steps,
-            guidance_scale=guidance,
-            image=image,
-            model_name=model_name,
-            save_path=save_dir,
-            res=res,
-            start_step=start_step,
-            iterations=iterations,
-            verbose=True,
-            edit_attr=args.edit_attr,
-            args=args,
-        )
-    else:
-        controller = AttentionControlEdit(diffusion_steps, self_replace_steps, args.res)
-        adv_image, clean_acc, adv_acc = diff_latent_attack.diffattack(
-            diffusion_model,
-            label,
-            controller,
-            num_inference_steps=diffusion_steps,
-            guidance_scale=guidance,
-            image=image,
-            save_path=save_dir,
-            res=res,
-            model_name=model_name,
-            start_step=start_step,
-            iterations=iterations,
-            args=args,
-        )
+
+    controller = AttentionControlEdit(diffusion_steps, self_replace_steps, args.res)
+    adv_image, clean_acc, adv_acc = diff_latent_attack.diffattack(
+        diffusion_model,
+        label,
+        controller,
+        num_inference_steps=diffusion_steps,
+        guidance_scale=guidance,
+        image=image,
+        save_path=save_dir,
+        res=res,
+        model_name=model_name,
+        start_step=start_step,
+        iterations=iterations,
+        args=args,
+    )
 
     return adv_image, clean_acc, adv_acc
 
@@ -256,7 +233,7 @@ if __name__ == "__main__":
     )  # Whether to test the robustness of the generated adversarial examples.
 
     print(
-        f"\n******Attack based on Diffusion ({args.attack_mode}), Attacked Dataset: {args.dataset_name}*********"
+        f"\n******Attack based on Diffusion, Attacked Dataset: {args.dataset_name}*********"
     )
 
     # Change the path to "stabilityai/stable-diffusion-2-base" if you want to use the pretrained model.
